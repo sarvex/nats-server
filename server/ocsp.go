@@ -387,8 +387,6 @@ func (srv *Server) NewOCSPMonitor(config *tlsConfigKind) (*tls.Config, *OCSPMoni
 		if err := srv.setupOCSPStapleStoreDir(); err != nil {
 			return nil, nil, err
 		}
-
-		// TODO: Add OCSP 'responder_cert' option in case CA cert not available.
 		issuers, err := getOCSPIssuer(caFile, cert.Certificate)
 		if err != nil {
 			return nil, nil, err
@@ -791,7 +789,12 @@ func getOCSPIssuer(issuerCert string, chain [][]byte) ([]*x509.Certificate, erro
 	switch {
 	case len(chain) == 1 && issuerCert == _EMPTY_:
 		err = fmt.Errorf("ocsp ca required in chain or configuration")
+	case len(chain) == 2 && issuerCert != _EMPTY_:
+		// Means it would be an issuer CA in the cert chain so use that
+		// instead of the configured CA file.
+		issuers, err = x509.ParseCertificates(chain[1])
 	case issuerCert != _EMPTY_:
+		// Use the CA File defined in the config.
 		issuers, err = parseCertPEM(issuerCert)
 	case len(chain) > 1 && issuerCert == _EMPTY_:
 		issuers, err = x509.ParseCertificates(chain[1])
@@ -805,11 +808,15 @@ func getOCSPIssuer(issuerCert string, chain [][]byte) ([]*x509.Certificate, erro
 	if len(issuers) == 0 {
 		return nil, fmt.Errorf("no issuers found")
 	}
-
+	var iss *x509.Certificate
 	for _, issuer := range issuers {
 		if !issuer.IsCA {
-			return nil, fmt.Errorf("%s invalid ca basic constraints: is not ca", issuer.Subject)
+			continue
 		}
+		iss = issuer
+	}
+	if iss == nil {
+		return nil, fmt.Errorf("invalid ocsp ca configuration: no ca found")
 	}
 
 	return issuers, nil

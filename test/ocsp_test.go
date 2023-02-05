@@ -83,38 +83,7 @@ func TestOCSPAlwaysMustStapleAndShutdown(t *testing.T) {
 	srv := RunServer(&opts)
 	defer srv.Shutdown()
 
-	nc, err := nats.Connect(fmt.Sprintf("tls://localhost:%d", opts.Port),
-		nats.Secure(&tls.Config{
-			VerifyConnection: func(s tls.ConnectionState) error {
-				resp, err := getOCSPStatus(s)
-				if err != nil {
-					return err
-				}
-				if resp.Status != ocsp.Good {
-					return fmt.Errorf("invalid staple")
-				}
-				return nil
-			},
-		}),
-		nats.RootCAs(caCert),
-		nats.ErrorHandler(noOpErrHandler),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer nc.Close()
-	sub, err := nc.SubscribeSync("foo")
-	if err != nil {
-		t.Fatal(err)
-	}
-	nc.Publish("foo", []byte("hello world"))
-	nc.Flush()
-
-	_, err = sub.NextMsg(1 * time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	nc.Close()
+	checkOCSPClientCanConnect(t, opts, caCert)
 
 	// The server will shutdown because the server becomes revoked
 	// and the policy is to always must-staple.  The OCSP Responder
@@ -2863,7 +2832,6 @@ func newOCSPResponder(t *testing.T, issuerCertPEM, issuerKeyPEM string) *http.Se
 }
 
 func newOCSPResponderDesignated(t *testing.T, issuerCertPEM, respCertPEM, respKeyPEM string, embed bool) *http.Server {
-	t.Helper()
 	var mu sync.Mutex
 	status := make(map[string]int)
 
@@ -3013,7 +2981,13 @@ func parseKeyPEM(t *testing.T, keyPEM string) *rsa.PrivateKey {
 
 	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 	if err != nil {
-		t.Fatalf("failed to parse ikey %s: %s", keyPEM, err)
+		key2, err2 := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err2 != nil {
+			t.Fatalf("failed to parse ikey %s: %s", keyPEM, err)
+		}
+		if key2 != nil {
+			return key2.(*rsa.PrivateKey)
+		}
 	}
 	return key
 }
@@ -3413,4 +3387,240 @@ func TestOCSPSuperCluster(t *testing.T) {
 	if n := srvD.NumOutboundGateways(); n > 1 {
 		t.Errorf("Expected single gateway, got: %v", n)
 	}
+}
+
+func TestOCSPAlwaysIssuerCA(t *testing.T) {
+	// Certs that have must staple will auto shutdown the server.
+	const (
+		rootCACert    = "configs/certs/ocsp-root-ca/rootCA/certs/ca.cert.pem"
+		caChainCACert = "configs/certs/ocsp-root-ca/interCA/certs/ca-chain.cert.pem"
+		// caCert will be the issuer CA in this case.
+		caCert          = "configs/certs/ocsp-root-ca/interCA/certs/intermediate.cert.pem"
+		caKey           = "configs/certs/ocsp-root-ca/interCA/private/intermediate.key.pem"
+		serverCert      = "configs/certs/ocsp-root-ca/interCA/certs/server.cert.pem"
+		serverChainCert = "configs/certs/ocsp-root-ca/interCA/certs/server-ca-chain.cert.pem"
+		serverKey       = "configs/certs/ocsp-root-ca/interCA/private/server.key.pem"
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ocspr := newOCSPResponder(t, caCert, caKey)
+	defer ocspr.Shutdown(ctx)
+	addr := fmt.Sprintf("http://%s", ocspr.Addr)
+	setOCSPStatus(t, addr, serverChainCert, ocsp.Good)
+
+	opts := server.Options{}
+	opts.Host = "127.0.0.1"
+	opts.NoLog = true
+	opts.NoSigs = true
+	opts.MaxControlLine = 4096
+	opts.Port = -1
+	// server cert signed by issuer CA.
+	opts.TLSCert = serverChainCert
+	opts.TLSKey = serverKey
+	opts.TLSCaCert = rootCACert
+	opts.TLSTimeout = 5
+	tcOpts := &server.TLSConfigOpts{
+		CertFile: opts.TLSCert,
+		KeyFile:  opts.TLSKey,
+		CaFile:   opts.TLSCaCert,
+		Timeout:  opts.TLSTimeout,
+	}
+
+	tlsConf, err := server.GenTLSConfig(tcOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.TLSConfig = tlsConf
+
+	opts.OCSPConfig = &server.OCSPConfig{
+		Mode:         server.OCSPModeAlways,
+		OverrideURLs: []string{addr},
+	}
+	srv := RunServer(&opts)
+	defer srv.Shutdown()
+
+	checkOCSPClientCanConnect(t, opts, caCert)
+
+	time.Sleep(2 * time.Second)
+	setOCSPStatus(t, addr, serverChainCert, ocsp.Revoked)
+	time.Sleep(2 * time.Second)
+
+	// Should be connection refused since server will abort now.
+	_, err = nats.Connect(fmt.Sprintf("tls://localhost:%d", opts.Port),
+		nats.RootCAs(caCert),
+		nats.ErrorHandler(noOpErrHandler),
+	)
+	if err != nats.ErrNoServers {
+		t.Errorf("Expected connection refused")
+	}
+	// Verify that the server finishes shutdown
+	srv.WaitForShutdown()
+}
+
+func TestOCSPAlwaysIssuerCAUnsetRootCA(t *testing.T) {
+	// Certs that have must staple will auto shutdown the server.
+	const (
+		rootCACert    = "configs/certs/ocsp-root-ca/rootCA/certs/ca.cert.pem"
+		caChainCACert = "configs/certs/ocsp-root-ca/interCA/certs/ca-chain.cert.pem"
+		// caCert will be the issuer CA in this case.
+		caCert          = "configs/certs/ocsp-root-ca/interCA/certs/intermediate.cert.pem"
+		caKey           = "configs/certs/ocsp-root-ca/interCA/private/intermediate.key.pem"
+		serverCert      = "configs/certs/ocsp-root-ca/interCA/certs/server.cert.pem"
+		serverChainCert = "configs/certs/ocsp-root-ca/interCA/certs/server-ca-chain.cert.pem"
+		serverKey       = "configs/certs/ocsp-root-ca/interCA/private/server.key.pem"
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// OCSP responder uses the Issuer CA.
+	ocspr := newOCSPResponder(t, caCert, caKey)
+	defer ocspr.Shutdown(ctx)
+	addr := fmt.Sprintf("http://%s", ocspr.Addr)
+	setOCSPStatus(t, addr, serverChainCert, ocsp.Good)
+
+	// RootCA is not set in this server and instead uses the Issuer CA
+	// from the certificate chain.
+	opts := server.Options{}
+	opts.Host = "127.0.0.1"
+	opts.NoLog = true
+	opts.NoSigs = true
+	opts.MaxControlLine = 4096
+	opts.Port = -1
+	opts.TLSCert = serverChainCert
+	opts.TLSKey = serverKey
+	opts.TLSTimeout = 5
+	tcOpts := &server.TLSConfigOpts{
+		CertFile: opts.TLSCert,
+		KeyFile:  opts.TLSKey,
+		Timeout:  opts.TLSTimeout,
+	}
+
+	tlsConf, err := server.GenTLSConfig(tcOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.TLSConfig = tlsConf
+
+	opts.OCSPConfig = &server.OCSPConfig{
+		Mode:         server.OCSPModeAlways,
+		OverrideURLs: []string{addr},
+	}
+	srv := RunServer(&opts)
+	defer srv.Shutdown()
+
+	checkOCSPClientCanConnect(t, opts, rootCACert)
+
+	// Revoke server cert.
+	time.Sleep(2 * time.Second)
+	setOCSPStatus(t, addr, serverChainCert, ocsp.Revoked)
+	time.Sleep(2 * time.Second)
+
+	// Expect connection refused.
+	_, err = nats.Connect(fmt.Sprintf("tls://localhost:%d", opts.Port),
+		nats.RootCAs(rootCACert),
+		nats.ErrorHandler(noOpErrHandler),
+	)
+	if err != nats.ErrNoServers {
+		t.Errorf("Expected connection refused")
+	}
+	srv.WaitForShutdown()
+}
+
+func TestOCSPAlwaysIssuerCANotPresent(t *testing.T) {
+	// Certs that have must staple will auto shutdown the server.
+	const (
+		rootCACert    = "configs/certs/ocsp-root-ca/rootCA/certs/ca.cert.pem"
+		caChainCACert = "configs/certs/ocsp-root-ca/interCA/certs/ca-chain.cert.pem"
+		// caCert will be the issuer CA in this case.
+		caCert          = "configs/certs/ocsp-root-ca/interCA/certs/intermediate.cert.pem"
+		caKey           = "configs/certs/ocsp-root-ca/interCA/private/intermediate.key.pem"
+		serverCert      = "configs/certs/ocsp-root-ca/interCA/certs/server.cert.pem"
+		serverChainCert = "configs/certs/ocsp-root-ca/interCA/certs/server-ca-chain.cert.pem"
+		serverKey       = "configs/certs/ocsp-root-ca/interCA/private/server.key.pem"
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// OCSP responder uses the Issuer CA.
+	ocspr := newOCSPResponder(t, caCert, caKey)
+	defer ocspr.Shutdown(ctx)
+	addr := fmt.Sprintf("http://%s", ocspr.Addr)
+	setOCSPStatus(t, addr, serverCert, ocsp.Good)
+
+	// RootCA is not set in this server and instead uses the Issuer CA
+	// from the certificate chain.
+	opts := server.Options{}
+	opts.Host = "127.0.0.1"
+	opts.NoLog = true
+	opts.NoSigs = true
+	opts.MaxControlLine = 4096
+	opts.Port = -1
+	opts.TLSCert = serverCert
+	opts.TLSKey = serverKey
+	opts.TLSCaCert = rootCACert
+	opts.TLSTimeout = 5
+	tcOpts := &server.TLSConfigOpts{
+		CertFile: opts.TLSCert,
+		KeyFile:  opts.TLSKey,
+		CaFile:   opts.TLSCaCert,
+		Timeout:  opts.TLSTimeout,
+	}
+
+	tlsConf, err := server.GenTLSConfig(tcOpts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.TLSConfig = tlsConf
+
+	opts.OCSPConfig = &server.OCSPConfig{
+		Mode:         server.OCSPModeAlways,
+		OverrideURLs: []string{addr},
+	}
+	_, err = server.NewServer(&opts)
+	if err == nil {
+		t.Error("Expected bad OCSP status update error")
+	}
+	expected := `bad OCSP status update for certificate at 'configs/certs/ocsp-root-ca/interCA/certs/server.cert.pem': failed to get remote status: bad OCSP signature: crypto/rsa: verification error`
+	if !strings.Contains(err.Error(), expected) {
+		t.Fatalf("Expected bad OCSP status update, got: %v", err)
+	}
+
+}
+
+func checkOCSPClientCanConnect(t *testing.T, opts server.Options, caCert string) {
+	nc, err := nats.Connect(fmt.Sprintf("tls://localhost:%d", opts.Port),
+		nats.Secure(&tls.Config{
+			VerifyConnection: func(s tls.ConnectionState) error {
+				resp, err := getOCSPStatus(s)
+				if err != nil {
+					return err
+				}
+				if resp.Status != ocsp.Good {
+					return fmt.Errorf("invalid staple")
+				}
+				return nil
+			},
+		}),
+		nats.RootCAs(caCert),
+		nats.ErrorHandler(noOpErrHandler),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+	sub, err := nc.SubscribeSync("foo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nc.Publish("foo", []byte("hello world"))
+	nc.Flush()
+
+	_, err = sub.NextMsg(1 * time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nc.Close()
 }
