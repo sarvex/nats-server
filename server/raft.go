@@ -1768,6 +1768,9 @@ func (n *raft) runAsFollower() {
 				n.debug("Not switching to candidate, observer only")
 			} else if n.isCatchingUp() {
 				n.debug("Not switching to candidate, catching up")
+			} else if n.s.isLameDuckMode() {
+				// TODO(nat): What if all servers enter lame duck mode at once?
+				n.debug("Not switching to candidate, lame duck mode")
 			} else {
 				n.switchToCandidate()
 				return
