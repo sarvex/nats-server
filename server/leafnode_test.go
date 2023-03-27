@@ -4846,3 +4846,284 @@ func TestLeafNodeDuplicateMsg(t *testing.T) {
 	t.Run("sub_b2_pub_a1", func(t *testing.T) { check(t, b2, a1) })
 	t.Run("sub_b2_pub_a2", func(t *testing.T) { check(t, b2, a2) })
 }
+
+func runConfiguredSpoke(t *testing.T, hubPort int, spokeNum int) *Server {
+
+	// Fire up the leaf
+	uha, err := url.Parse(fmt.Sprintf("nats://ha-user%d:s3cr3t@localhost:%d", spokeNum, hubPort))
+	if err != nil {
+		t.Fatalf("Error parsing url: %v", err)
+	}
+
+	uhb, err := url.Parse(fmt.Sprintf("nats://hb-user%d:s3cr3t@localhost:%d", spokeNum, hubPort))
+	if err != nil {
+		t.Fatalf("Error parsing url: %v", err)
+	}
+
+	configStr := fmt.Sprintf(`
+		port: -1
+		server_name: store%d
+		leaf: {
+			# CLOUD (hub) <-> STORE (leaf)
+			remotes [
+				{ url: "%s", account: "SA" }
+				{ url: "%s", account: "SB" }
+			]
+		}
+		
+		accounts: {
+			SA: {}
+			SB: {}
+			SYS: {
+				users: [ { user: "system", password: "s3cr3t" } ]
+			}
+		}
+		system_account: "SYS"
+`, spokeNum, uha.String(), uhb.String())
+
+	leafConfig := createConfFile(t, []byte(configStr))
+	defer removeFile(t, leafConfig)
+	leafServer, _ := RunServerWithConfig(leafConfig)
+	// defer leafServer.Shutdown()
+
+	// A little settle time
+	time.Sleep(1 * time.Second)
+	checkLeafNodeConnectedCount(t, leafServer, 2)
+	return leafServer
+}
+
+func TestMultiSpokeToHubAccountLDS(t *testing.T) {
+
+	// Fire up the hub
+	hubConfig := createConfFile(t, []byte(`
+		port: -1
+		server_name: cloud
+		leaf {
+			listen: "127.0.0.1:-1"
+		}
+
+		accounts: {
+			HA: {
+				users: [
+					{user: "ha-user1", password: "s3cr3t"}
+					{user: "ha-user2", password: "s3cr3t"}
+					{user: "ha-user3", password: "s3cr3t"}
+					{user: "ha-user4", password: "s3cr3t"}
+					{user: "ha-user5", password: "s3cr3t"}
+					{user: "ha-user6", password: "s3cr3t"}
+					{user: "ha-user7", password: "s3cr3t"}
+					{user: "ha-user8", password: "s3cr3t"}
+					{user: "ha-user9", password: "s3cr3t"}
+					{user: "ha-user10", password: "s3cr3t"}
+				]
+			}
+			HB: {
+				users: [
+					{user: "hb-user1", password: "s3cr3t"}
+					{user: "hb-user2", password: "s3cr3t"}
+					{user: "hb-user3", password: "s3cr3t"}
+					{user: "hb-user4", password: "s3cr3t"}
+					{user: "hb-user5", password: "s3cr3t"}
+					{user: "hb-user6", password: "s3cr3t"}
+					{user: "hb-user7", password: "s3cr3t"}
+					{user: "hb-user8", password: "s3cr3t"}
+					{user: "hb-user9", password: "s3cr3t"}
+					{user: "hb-user10", password: "s3cr3t"}
+				]
+			}
+			SYS: {
+				users: [ { user: "system", password: "s3cr3t" } ]
+			}
+		}
+		system_account: "SYS"
+	`))
+	defer removeFile(t, hubConfig)
+	hubServer, hubOptions := RunServerWithConfig(hubConfig)
+	defer hubServer.Shutdown()
+
+	testCases := []struct {
+		numSpokes int
+	}{
+		{numSpokes: 5},
+	}
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("%d spokes", tc.numSpokes), func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf(fmt.Sprintf("%v", r))
+				}
+			}()
+
+			spokeMap := make(map[int]*Server)
+
+			for i := 0; i < tc.numSpokes; i++ {
+				spoke := runConfiguredSpoke(t, hubOptions.LeafNode.Port, i+1)
+				spokeMap[i+1] = spoke
+			}
+
+			// Here we can introspect $LDS subs
+			numLDSSubs := 0
+			for _, as := range spokeMap {
+				myLeafzInfo, _ := as.Leafz(&LeafzOptions{Subscriptions: true})
+				// fmt.Println(as.serverName(), ":")
+				for _, li := range myLeafzInfo.Leafs {
+					// fmt.Println("Spoke account:", li.Account)
+					numLDSSubs = 0
+					for _, s := range li.Subs {
+						if strings.HasPrefix(s, "$LDS") {
+							// fmt.Println(s)
+							numLDSSubs++
+						}
+					}
+					// Number of $LDS subs for a spoke should be equal to 1 hub + n peer spoke (not counting self spoke)
+					require_True(t, numLDSSubs == tc.numSpokes)
+				}
+			}
+
+			// Cleanup spokes
+			for _, si := range spokeMap {
+				si.Shutdown()
+			}
+
+		})
+	}
+}
+
+//func TestProductionPingRequest(t *testing.T) {
+//	var err error
+//	var sa1Received = int32(0)
+//	var sa2Received = int32(0)
+//	var store1ProdAlive = int32(0)
+//	var store2ProdAlive = int32(0)
+//
+//	wd, _ := os.Getwd()
+//	rf := StartRetailFleet(wd + "/..")
+//	require_True(t, len(rf.servers) == 3)
+//	defer StopRetailFleet(rf)
+//
+//	cloudServer := rf.servers[0]
+//	store1Server := rf.servers[1]
+//	store2Server := rf.servers[2]
+//
+//	sa1, _ := nats.Connect(store1Server.ClientURL(), nats.UserInfo("user-app-1", "s3cr3t"))
+//	require_True(t, sa1 != nil)
+//	defer sa1.Close()
+//
+//	sa2, _ := nats.Connect(store2Server.ClientURL(), nats.UserInfo("user-app-1", "s3cr3t"))
+//	require_True(t, sa1 != nil)
+//	defer sa2.Close()
+//
+//	ca1, _ := nats.Connect(cloudServer.ClientURL(), nats.UserInfo("user-cloud-app-1", "s3cr3t"))
+//	require_True(t, ca1 != nil)
+//	defer ca1.Close()
+//
+//	// Bring up our store #1 service; respond to pings by emitting a PRODALIVE event on the store bus
+//	_, err = sa1.Subscribe("production.ping", func(request *nats.Msg) {
+//		atomic.AddInt32(&sa1Received, 1)
+//		fmt.Println("store 1 got pinged:", request.Subject)
+//		err = sa1.Publish("event.C4.PRODALIVE", []byte(""))
+//		require_NoError(t, err)
+//	})
+//	require_NoError(t, err)
+//
+//	// Bring up our store #2 service; respond to pings by emitting a PRODALIVE event on the store bus
+//	_, err = sa2.Subscribe("production.ping", func(request *nats.Msg) {
+//		atomic.AddInt32(&sa2Received, 1)
+//		fmt.Println("store 2 got pinged:", request.Subject)
+//		err := sa2.Publish("event.C4.PRODALIVE", []byte(""))
+//		require_NoError(t, err)
+//	})
+//	require_NoError(t, err)
+//
+//	// fixme(TGB): desired bus.*.*.PRODALIVE filter will not propagate interest to stores. Why?
+//	// ok: bus.>
+//	// ok: bus.*.>
+//	// xx: bus.*.*.>
+//	// xx: bus.*.*.*
+//	// xx: bus.*.*.PRODALIVE
+//	// ok: bus.1.>
+//	// ok: bus.1.*.>
+//	// ok: bus.1.*.*
+//	// ok: bus.1.*.PRODALIVE
+//	// ok: bus.1.C4.PRODALIVE
+//	// Cloud app listens to events from stores
+//	_, err = ca1.Subscribe("bus.>", func(request *nats.Msg) {
+//		fmt.Println("cloud app received PRODALIVE event from:", request.Subject)
+//		subjectToks := strings.Split(request.Subject, ".")
+//		require_True(t, len(subjectToks) >= 4)
+//		// If not a PRODALIVE event, ignore
+//		if subjectToks[3] != "PRODALIVE" {
+//			return
+//		}
+//		switch subjectToks[1] {
+//		case "1":
+//			atomic.AddInt32(&store1ProdAlive, 1)
+//		case "2":
+//			atomic.AddInt32(&store2ProdAlive, 1)
+//		default:
+//			t.Fatalf("expected to be able to parse store id from event")
+//		}
+//	})
+//	require_NoError(t, err)
+//
+//	// short delay for interest propagation
+//	time.Sleep(100 * time.Millisecond)
+//
+//	// Ping Store 1 Production
+//	err = ca1.Publish("production.ping.1", []byte("Are you alive Store 1 production?"))
+//	require_NoError(t, err)
+//
+//	checkFor(t, 200*time.Millisecond, 4*time.Millisecond, func() error {
+//		if store1ProdAlive == 1 && store2ProdAlive == 0 {
+//			return nil
+//		}
+//		return fmt.Errorf("expected 1 alive event from store 1 and none from store 2, got %d and %d", store1ProdAlive, store2ProdAlive)
+//	})
+//
+//	// Ping ALL stores Production
+//	err = ca1.Publish("production.ping.ALL", []byte("Are you alive all Stores?"))
+//	require_NoError(t, err)
+//
+//	checkFor(t, 200*time.Millisecond, 4*time.Millisecond, func() error {
+//		if store1ProdAlive == 2 && store2ProdAlive == 1 {
+//			return nil
+//		}
+//		return fmt.Errorf("expected two alive event from store 1 and one from store 2, got %d and %d", store1ProdAlive, store2ProdAlive)
+//	})
+//
+//}
+//
+//type RetailFleet struct {
+//	// Our servers.
+//	servers []*Server
+//	// Beacon for the DNA service.
+//	beacon *time.Ticker
+//	// Used to measure full cycle request/response times.
+//	rrTime sync.Map
+//	// Signal we are done.
+//	done chan bool
+//}
+//
+//var rf *RetailFleet
+//
+//func StartRetailFleet(projBaseDir string) *RetailFleet {
+//	rf = &RetailFleet{servers: make([]*server.Server, 3), done: make(chan bool)}
+//	rf.servers[0], _ = npoci.Up(projBaseDir + "/config/cloud_server.conf")
+//	rf.servers[1], _ = npoci.Up(projBaseDir + "/config/store1_server.conf")
+//	rf.servers[2], _ = npoci.Up(projBaseDir + "/config/store2_server.conf")
+//
+//	for _, s := range rf.servers {
+//		log.Printf("  Server: [%q]\n", s.ClientURL())
+//	}
+//
+//	return rf
+//}
+//
+//func StopRetailFleet(rf *RetailFleet) {
+//	for _, s := range rf.servers {
+//		log.Printf("  Shutting Down: [%q]\n", s.ClientURL())
+//		s.Shutdown()
+//	}
+//
+//	return
+//}
