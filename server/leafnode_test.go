@@ -4892,6 +4892,7 @@ func runConfiguredSpoke(t *testing.T, hubPort int, spokeNum int) *Server {
 	return leafServer
 }
 
+// TestMultiSpokeToHubAccountLDS shows equal LDS sub/marker population on all spokes sharing a hub account
 func TestMultiSpokeToHubAccountLDS(t *testing.T) {
 
 	// Fire up the hub
@@ -4989,6 +4990,7 @@ func TestMultiSpokeToHubAccountLDS(t *testing.T) {
 	}
 }
 
+// TestProductionPingRequest shows pass/fail on sub across two sets of export/import and a leaf connection
 func TestProductionPingRequest(t *testing.T) {
 	var err error
 	var sa1Received = int32(0)
