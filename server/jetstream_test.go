@@ -19784,3 +19784,109 @@ func TestJetStreamConsumerAckFloorWithExpired(t *testing.T) {
 	require_True(t, ci.NumPending == 0)
 	require_True(t, ci.NumRedelivered == 0)
 }
+
+func TestJetStreamBasic_StreamCreateRaceWQ(t *testing.T) {
+	cases := []struct {
+		name      string
+		clustered bool
+	}{
+		{"MemoryStoreR1", false},
+		{"MemoryStoreR3", true},
+		{"FileStoreR1", false},
+		{"FileStoreR3", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var s *Server
+			if c.clustered {
+				c := createJetStreamClusterExplicit(t, "R3S", 3)
+				defer c.shutdown()
+				s = c.randomServer()
+			} else {
+				s = RunBasicJetStreamServer(t)
+				defer s.Shutdown()
+			}
+			// Two clients will create the same streams twice consecutively.
+			nc1, js1 := jsClientConnect(t, s)
+			defer nc1.Close()
+
+			nc2, js2 := jsClientConnect(t, s)
+			defer nc2.Close()
+
+			sconf := &nats.StreamConfig{
+				Name:      "hello",
+				Subjects:  []string{"hello"},
+				MaxAge:    time.Hour,
+				Retention: nats.WorkQueuePolicy,
+			}
+			if c.clustered {
+				sconf.Replicas = 1
+			}
+
+			// Attempt to create the stream a few times in parallel.
+			expectedMsgs := 100
+			msgCh := make(chan *nats.Msg, expectedMsgs)
+			errCh := make(chan error, 5)
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				_, err := js1.AddStream(sconf)
+				if err != nil {
+					errCh <- err
+				}
+				wg.Done()
+			}()
+			wg.Add(1)
+			go func() {
+				_, err := js2.AddStream(sconf)
+				if err != nil {
+					errCh <- err
+				}
+				wg.Done()
+			}()
+			wg.Wait()
+
+			select {
+			case err := <-errCh:
+				t.Error(err)
+			default:
+			}
+
+			sub, err := js1.Subscribe("hello", func(msg *nats.Msg) {
+				msgCh <- msg
+				t.Logf("DELIVERED MESSAGE: %+v %v\n", msg, len(msgCh))
+			})
+			if err != nil {
+				t.Error(err)
+			}
+			defer sub.Unsubscribe()
+
+			for i := 0; i < expectedMsgs; i++ {
+				data := fmt.Sprintf("msg:%d", i)
+				_, err := js1.Publish("hello", []byte(data))
+				if err != nil {
+					t.Error(err)
+				}
+			}
+
+			start := time.Now()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			totalMsgs := make([]*nats.Msg, 0)
+
+		Loop:
+			for {
+				select {
+				case msg := <-msgCh:
+					totalMsgs = append(totalMsgs, msg)
+					if len(totalMsgs) == expectedMsgs {
+						break Loop
+					}
+				case <-ctx.Done():
+					t.Fatalf("Failed waiting for all messages after %.3f, got: %v", time.Since(start).Seconds(), len(totalMsgs))
+					break Loop
+				}
+			}
+		})
+	}
+}
