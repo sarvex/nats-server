@@ -19787,14 +19787,13 @@ func TestJetStreamConsumerAckFloorWithExpired(t *testing.T) {
 
 func TestJetStreamBasic_StreamCreateRaceWQ(t *testing.T) {
 	cases := []struct {
-		name    string
-		mconfig *StreamConfig
+		name      string
 		clustered bool
 	}{
-		{"MemoryStoreR1", &StreamConfig{Name: "MY_MSG_SET", Storage: MemoryStorage, Subjects: []string{"foo", "bar"}}, false},
-		{"MemoryStoreR3", &StreamConfig{Name: "MY_MSG_SET", Storage: FileStorage, Subjects: []string{"foo", "bar"}}, true},
-		{"FileStoreR1", &StreamConfig{Name: "MY_MSG_SET", Storage: FileStorage, Subjects: []string{"foo", "bar"}}, false},
-		{"FileStoreR3", &StreamConfig{Name: "MY_MSG_SET", Storage: FileStorage, Subjects: []string{"foo", "bar"}}, true},
+		{"MemoryStoreR1", false},
+		{"MemoryStoreR3", true},
+		{"FileStoreR1", false},
+		{"FileStoreR3", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
