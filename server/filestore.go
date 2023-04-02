@@ -1046,6 +1046,7 @@ func (mb *msgBlock) rebuildStateLocked() (*LostStreamData, error) {
 		// Do some quick sanity checks here.
 		if dlen < 0 || int(slen) > (dlen-8) || dlen > int(rl) || rl > rlBadThresh {
 			truncate(index)
+			fmt.Println("Malformed Message Condition:", dlen < 0, int(slen) > dlen, dlen > int(rl), rl > rlBadThresh, "--->", errBadMsg)
 			return gatherLost(lbuf - index), errBadMsg
 		}
 
