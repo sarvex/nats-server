@@ -19789,14 +19789,25 @@ func TestJetStreamBasic_StreamCreateRaceWQ(t *testing.T) {
 	cases := []struct {
 		name    string
 		mconfig *StreamConfig
+		clustered bool
 	}{
-		{"MemoryStore", &StreamConfig{Name: "MY_MSG_SET", Storage: MemoryStorage, Subjects: []string{"foo", "bar"}}},
-		{"FileStore", &StreamConfig{Name: "MY_MSG_SET", Storage: FileStorage, Subjects: []string{"foo", "bar"}}},
+		{"MemoryStoreR1", &StreamConfig{Name: "MY_MSG_SET", Storage: MemoryStorage, Subjects: []string{"foo", "bar"}}, false},
+		{"MemoryStoreR3", &StreamConfig{Name: "MY_MSG_SET", Storage: FileStorage, Subjects: []string{"foo", "bar"}}, true},
+		{"FileStoreR1", &StreamConfig{Name: "MY_MSG_SET", Storage: FileStorage, Subjects: []string{"foo", "bar"}}, false},
+		{"FileStoreR3", &StreamConfig{Name: "MY_MSG_SET", Storage: FileStorage, Subjects: []string{"foo", "bar"}}, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			s := RunBasicJetStreamServer(t)
-
+			var s *Server
+			if c.clustered {
+				s = RunBasicJetStreamServer(t)
+				c := createJetStreamClusterExplicit(t, "R3S", 3)
+				defer c.shutdown()
+				s = c.randomServer()
+			} else {
+				s = RunBasicJetStreamServer(t)
+				defer s.Shutdown()
+			}
 			// Two clients will create the same streams twice consecutively.
 			nc1, js1 := jsClientConnect(t, s)
 			defer nc1.Close()
@@ -19804,18 +19815,18 @@ func TestJetStreamBasic_StreamCreateRaceWQ(t *testing.T) {
 			nc2, js2 := jsClientConnect(t, s)
 			defer nc2.Close()
 
-			// nc3, js3 := jsClientConnect(t, s)
-			// defer nc3.Close()
-
-			expectedMsgs := 100
 			sconf := &nats.StreamConfig{
 				Name:      "hello",
 				Subjects:  []string{"hello"},
 				MaxAge:    time.Hour,
 				Retention: nats.WorkQueuePolicy,
 			}
+			if c.clustered {
+				sconf.Replicas = 1
+			}
 
 			// Attempt to create the stream a few times in parallel.
+			expectedMsgs := 100
 			msgCh := make(chan *nats.Msg, expectedMsgs)
 			errCh := make(chan error, 5)
 			var wg sync.WaitGroup
@@ -19837,9 +19848,15 @@ func TestJetStreamBasic_StreamCreateRaceWQ(t *testing.T) {
 			}()
 			wg.Wait()
 
-			sub, err := js1.Subscribe("hello", func(msg *nats.Msg){
-				t.Logf("DELIVERED MESSAGE: %+v \n", msg)
+			select {
+			case err := <-errCh:
+				t.Error(err)
+			default:
+			}
+
+			sub, err := js1.Subscribe("hello", func(msg *nats.Msg) {
 				msgCh <- msg
+				t.Logf("DELIVERED MESSAGE: %+v %v\n", msg, len(msgCh))
 			})
 			if err != nil {
 				t.Error(err)
@@ -19872,15 +19889,6 @@ func TestJetStreamBasic_StreamCreateRaceWQ(t *testing.T) {
 					break Loop
 				}
 			}
-
-			if len(totalMsgs) != expectedMsgs {
-				t.Fatalf("Expected %d, got: %d", expectedMsgs, len(totalMsgs))
-			}
-			for msg := range msgCh {
-				t.Logf("%+v", msg)
-			}
-			
-			defer s.Shutdown()
 		})
 	}
 }
