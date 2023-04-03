@@ -37,7 +37,7 @@ func TestJetStreamConsumerMultipleFiltersMultipleConsumers(t *testing.T) {
 	}
 
 	// Setup consumers, filtering some of the messages from the stream.
-	consumers := []struct {
+	consumers := []*struct {
 		name         string
 		subjects     []string
 		expectedMsgs int
@@ -82,9 +82,12 @@ func TestJetStreamConsumerMultipleFiltersMultipleConsumers(t *testing.T) {
 	rand.Seed(time.Now().UnixNano())
 	for _, subject := range subjects {
 		go func(subject string, messages int, wc bool) {
+			nc, js := jsClientConnect(t, s)
+			defer nc.Close()
+			time.Sleep(time.Duration(rand.Int63n(1000)+1) * time.Millisecond)
 			fmt.Printf("publishing subject %v with %v messages\n", subject, messages)
 			for i := 0; i < messages; i++ {
-				time.Sleep(time.Duration(rand.Int63n(10000)+1) * time.Microsecond)
+				time.Sleep(time.Duration(rand.Int63n(1000)+1) * time.Microsecond)
 				// If subject has wildcard, add random last subject token.
 				pubSubject := subject
 				if wc {
@@ -97,7 +100,7 @@ func TestJetStreamConsumerMultipleFiltersMultipleConsumers(t *testing.T) {
 		}(subject.subject, subject.messages, subject.wc)
 	}
 
-	checkFor(t, time.Second*10, time.Second*1, func() error {
+	checkFor(t, time.Second*30, time.Second*1, func() error {
 		for _, consumer := range consumers {
 			info, err := js.ConsumerInfo("TEST", consumer.name)
 			require_NoError(t, err)
