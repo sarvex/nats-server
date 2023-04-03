@@ -3215,11 +3215,11 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 	// if we have filters, iterate over filters and optimize by buffering found messages.
 	for _, filter := range o.subjf {
 		if filter.nextSeq < o.sseq {
-			fmt.Printf("RESET SEQUENCE CURR:%v FROM: %v TO:%v consumer: %v\n", filter.currentSeq, filter.nextSeq, o.sseq, o.cfg.Name)
+			// fmt.Printf("RESET SEQUENCE CURR:%v FROM: %v TO:%v consumer: %v\n", filter.currentSeq, filter.nextSeq, o.sseq, o.cfg.Name)
 
-			if o.cfg.Durable == "C1" {
-				fmt.Printf("FITER < OSSEQ. nextSeq:%v o.sseq %v\n", filter.nextSeq, o.sseq)
-			}
+			// if o.cfg.Durable == "C1" {
+			// 	o.client.Warnf("FITER < OSSEQ. nextSeq:%v o.sseq %v\n", filter.nextSeq, o.sseq)
+			// }
 
 			// o.subjf should always point to the right starting point for reading messages
 			// if anything modified it, make sure our sequence do not start earlier.
@@ -3244,9 +3244,6 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 			}
 			if sseq >= filter.nextSeq {
 				filter.nextSeq = sseq + 1
-				if err == ErrStoreEOF {
-					o.updateSkipped(uint64(filter.nextSeq))
-				}
 			}
 		}
 
@@ -3268,19 +3265,12 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 	for _, filter := range o.subjf {
 		// set o.sseq to the first subject sequence
 		if filter.nextSeq > o.sseq && filter.err == nil {
-			if o.cfg.Durable == "C1" {
-
-				// fmt.Printf("UPDATING SSEQ. nextSeq:%v o.sseq %v\n", filter.nextSeq, o.sseq)
-			}
-			// o.sseq = filter.nextSeq
+			// fmt.Printf("UPDATING SSEQ. nextSeq:%v o.sseq %v\n", filter.nextSeq, o.sseq)
+			o.sseq = filter.nextSeq
 		}
 		// This means we got a message in this subject fetched.
 		if filter.pmsg != nil {
 			filter.currentSeq = filter.nextSeq
-			if o.cfg.Durable == "C1" {
-
-				// fmt.Printf("sub:%v | setting seq %v to %v. error: %v\n", filter.subject, o.sseq, filter.nextSeq, filter.err)
-			}
 			// o.sseq = filter.currentSeq
 			returned := filter.pmsg
 			filter.pmsg = nil

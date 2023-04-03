@@ -85,7 +85,7 @@ func TestJetStreamConsumerMultipleFiltersMultipleConsumers(t *testing.T) {
 			nc, js := jsClientConnect(t, s)
 			defer nc.Close()
 			time.Sleep(time.Duration(rand.Int63n(1000)+1) * time.Millisecond)
-			fmt.Printf("publishing subject %v with %v messages\n", subject, messages)
+			// fmt.Printf("publishing subject %v with %v messages\n", subject, messages)
 			for i := 0; i < messages; i++ {
 				time.Sleep(time.Duration(rand.Int63n(1000)+1) * time.Microsecond)
 				// If subject has wildcard, add random last subject token.
@@ -96,11 +96,11 @@ func TestJetStreamConsumerMultipleFiltersMultipleConsumers(t *testing.T) {
 				_, err := js.PublishAsync(pubSubject, []byte("data"))
 				require_NoError(t, err)
 			}
-			fmt.Printf("DONE PUBBLISHING FOR %v\n", subject)
+			// fmt.Printf("DONE PUBBLISHING FOR %v\n", subject)
 		}(subject.subject, subject.messages, subject.wc)
 	}
 
-	checkFor(t, time.Second*30, time.Second*1, func() error {
+	checkFor(t, time.Second*15, time.Second*1, func() error {
 		for _, consumer := range consumers {
 			info, err := js.ConsumerInfo("TEST", consumer.name)
 			require_NoError(t, err)
