@@ -3215,6 +3215,7 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 	// if we have filters, iterate over filters and optimize by buffering found messages.
 	for _, filter := range o.subjf {
 		if filter.nextSeq < o.sseq {
+			fmt.Printf("RESET SEQUENCE CURR:%v FROM: %v TO:%v consumer: %v\n", filter.currentSeq, filter.nextSeq, o.sseq, o.cfg.Name)
 
 			if o.cfg.Durable == "C1" {
 				fmt.Printf("FITER < OSSEQ. nextSeq:%v o.sseq %v\n", filter.nextSeq, o.sseq)
