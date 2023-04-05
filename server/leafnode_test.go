@@ -5399,3 +5399,415 @@ func TestProductionPingRequest(t *testing.T) {
 		})
 	}
 }
+
+// TestProductionPingRequestNoStorePerms shows pass/fail on sub across two sets of export/import and a leaf connection
+func TestProductionPingRequestNoStorePerms(t *testing.T) {
+	var err error
+	var sa1Received = int32(0)
+	var sa2Received = int32(0)
+
+	// Fire up the cloud
+	cloudConfig := createConfFile(t, []byte(`
+		port: 4222
+		server_name: cloud
+		http_port: 8222
+		log_file: "/tmp/nats_cloud_server.log"
+		debug: true
+		
+		leaf: {
+			listen: "127.0.0.1:7422"
+		}
+		
+		accounts: {
+			APP_EXPORTS: [   { stream: "event.>" }   ]
+			APP_IMPORTS: [
+							{ stream: { account: "CLOUD-APP-1", subject: "event.>" }, to: "bus.>" }
+							{ stream: { account: "CLOUD-APP-2", subject: "event.>" }, to: "bus.>" }
+							{ stream: { account: "CLOUD-APP-3", subject: "event.>" }, to: "bus.>" }
+							{ service: { account: "CLOUD", subject: "downlink.>" }, to: "event.>" }
+							{ stream: { account: "CLOUD", subject: "uplink.>" }, to: "bus.>" }
+						 ]
+		
+			# The cloud's gateway account for events
+			CLOUD: {
+				users: [
+					{
+						user: "user-store-1", password: "s3cr3t"
+						permissions: {
+							// Store 1 not restricted in uplink
+							publish: [ "uplink.>" ],
+							subscribe: [ "downlink.1.>", "downlink.ALL.>" ]
+						}
+					}
+					{
+						user: "user-store-2", password: "s3cr3t"
+						permissions: {
+							// Store 2 not restricted in uplink
+							publish: [ "uplink.>" ],
+							subscribe: [ "downlink.2.>", "downlink.ALL.>" ]
+						}
+					}
+				]
+				exports: [
+					{ stream: "uplink.>" }
+					{ service: "downlink.>" }
+				]
+			}
+		
+			# Store APP-1 presence in cNATS
+			STORE-APP-1: {
+				users: [
+					{
+						user: "user-app-1-store-1", password: "s3cr3t"
+						permissions: {
+							publish: [ "cart.status", "_R_.>" ]
+							subscribe: [ "inbox.1.>", "production.status.1.>", production.ping.1, production.ping.ALL ]
+							allow_responses: { max: 1, expires: "1m" }
+						}
+					}
+					{
+						user: "user-app-1-store-2", password: "s3cr3t"
+						permissions: {
+							publish: [ "cart.status", "_R_.>" ]
+							subscribe: [ "inbox.2.>", "production.status.2.>", production.ping.2, production.ping.ALL ]
+							allow_responses: { max: 1, expires: "1m" }
+						}
+					}
+				]
+				exports: [
+					{ service: "production.status.>" }
+					{ service: "production.ping.*" }
+				]
+				imports: [
+					{ service: { account: "CLOUD-APP-1", subject: "cart.status" } }
+				]
+			}
+		
+			CLOUD-APP-1: {
+				users: [
+					{  user: "user-cloud-app-1", password: "s3cr3t"  }
+				]
+				exports: [
+							{ stream: "event.>" }
+							{ service: "cart.status" }
+				]
+				imports: [
+							{ stream: { account: "CLOUD-APP-1", subject: "event.>" }, to: "bus.>" }
+							{ stream: { account: "CLOUD-APP-2", subject: "event.>" }, to: "bus.>" }
+							{ stream: { account: "CLOUD-APP-3", subject: "event.>" }, to: "bus.>" }
+							{ service: { account: "CLOUD", subject: "downlink.>" }, to: "event.>" }
+							{ stream: { account: "CLOUD", subject: "uplink.>" }, to: "bus.>" }
+							{ service: { account: "STORE-APP-1", subject: "production.status.>" } }
+							{ service: { account: "STORE-APP-1", subject: "production.ping.*" } }
+				]
+			}
+		
+			CLOUD-APP-2: {
+				users: [ { user: "user-cloud-app-2", password: "s3cr3t" } ]
+				exports: $APP_EXPORTS
+				imports: $APP_IMPORTS
+			}
+		
+			CLOUD-APP-3: {
+				users: [ { user: "user-cloud-app-3", password: "s3cr3t" } ]
+				exports: $APP_EXPORTS
+				imports: $APP_IMPORTS
+			}
+		
+			SYS: {
+				users: [ { user: "user-system", password: "s3cr3t" } ]
+			}
+		}
+		system_account: "SYS"
+	`))
+	defer removeFile(t, cloudConfig)
+	cloudServer, _ := RunServerWithConfig(cloudConfig)
+	require_True(t, cloudServer != nil)
+	defer cloudServer.Shutdown()
+
+	// Fire up store1
+	store1Config := createConfFile(t, []byte(`
+		port: 4322
+		server_name: store1
+		http_port: 8322
+		log_file: "/tmp/nats_store1_server.log"
+		debug: true
+		
+		leaf: {
+			# CLOUD (hub) <-> STORE (leaf)
+			remotes [
+				{ url: "nats-leaf://user-store-1:s3cr3t@127.0.0.1:7422", account: "STORE" }
+				{ url: "nats-leaf://user-app-1-store-1:s3cr3t@127.0.0.1:7422", account: "APP-1" }
+			]
+		}
+		
+		accounts: {
+			APP_EXPORTS: [  { stream: "event.>" }  ]
+			APP_IMPORTS: [
+							{ stream: { account: "APP-1", subject: "event.>" }, to: "bus.>" }
+							{ stream: { account: "APP-2", subject: "event.>" }, to: "bus.>" }
+							{ stream: { account: "APP-3", subject: "event.>" }, to: "bus.>" }
+							{ service: { account: "STORE", subject: "uplink.1.*.SALETX.>" }, to: "event.*.SALETX.>" }
+							{ service: { account: "STORE", subject: "uplink.1.*.MOPREADY.>" }, to: "event.*.MOPREADY.>" }
+							{ service: { account: "STORE", subject: "uplink.1.*.PRODALIVE" }, to: "event.*.PRODALIVE" }
+							{ stream: { account: "STORE", subject: "downlink.1.>" }, to: "bus.>" }
+							{ stream: { account: "STORE", subject: "downlink.ALL.>" }, to: "bus.>" }
+						 ]
+		
+			NO_PII_PERMS: {
+				subscribe: {
+					# i.e. may not subscribe C1 or C2 events
+					deny: [ "bus.C1.>", "bus.C2.>" ]
+				}
+			}
+		
+			# The store's gateway account for events
+			STORE: {
+				exports: [
+					{ stream: "downlink.1.>" }
+					{ stream: "downlink.ALL.>" }
+					{ service: "uplink.1.*.SALETX.>" }
+					{ service: "uplink.1.*.MOPREADY.>" }
+					{ service: "uplink.1.*.PRODALIVE" }
+				]
+			}
+		
+			APP-1: {
+				users: [ { user: "user-app-1", password: "s3cr3t" } ]
+				exports: $APP_EXPORTS
+				imports: $APP_IMPORTS
+				mappings: {
+						 production.status.1.>: production.status.>
+						 production.ping.1: production.ping
+						 production.ping.ALL: production.ping
+				}
+			}
+		
+			APP-2: {
+				users: [ { user: "user-app-2", password: "s3cr3t" } ]
+				exports: $APP_EXPORTS
+				imports: $APP_IMPORTS
+			}
+		
+			# client's in the APP-3 account get NO_PII_PERMS
+			APP-3: {
+				users: [ { user: "user-app-3", password: "s3cr3t", permissions: $NO_PII_PERMS } ]
+				exports: $APP_EXPORTS
+				imports: $APP_IMPORTS
+			}
+		
+			SYS: {
+				users: [ { user: "user-system", password: "s3cr3t" } ]
+			}
+		}
+		system_account: "SYS"
+	`))
+	defer removeFile(t, store1Config)
+	store1Server, _ := RunServerWithConfig(store1Config)
+	require_True(t, store1Server != nil)
+	defer store1Server.Shutdown()
+
+	// Fire up store2
+	store2Config := createConfFile(t, []byte(`
+		port: 4422
+		server_name: store2
+		http_port: 8422
+		log_file: "/tmp/nats_store2_server.log"
+		debug: true
+		
+		leaf: {
+			# CLOUD (hub) <-> STORE (leaf)
+			remotes [
+				{ url: "nats-leaf://user-store-2:s3cr3t@127.0.0.1:7422", account: "STORE" }
+				{ url: "nats-leaf://user-app-1-store-2:s3cr3t@127.0.0.1:7422", account: "APP-1" }
+			]
+		}
+		
+		accounts: {
+			APP_EXPORTS: [  { stream: "event.>" }  ]
+			APP_IMPORTS: [
+							{ stream: { account: "APP-1", subject: "event.>" }, to: "bus.>" }
+							{ stream: { account: "APP-2", subject: "event.>" }, to: "bus.>" }
+							{ stream: { account: "APP-3", subject: "event.>" }, to: "bus.>" }
+							{ service: { account: "STORE", subject: "uplink.2.*.SALETX.>" }, to: "event.*.SALETX.>" }
+							{ service: { account: "STORE", subject: "uplink.2.*.MOPREADY.>" }, to: "event.*.MOPREADY.>" }
+							{ service: { account: "STORE", subject: "uplink.2.*.PRODALIVE" }, to: "event.*.PRODALIVE" }
+							{ stream: { account: "STORE", subject: "downlink.2.>" }, to: "bus.>" }
+							{ stream: { account: "STORE", subject: "downlink.ALL.>" }, to: "bus.>" }
+						 ]
+		
+			NO_PII_PERMS: {
+				subscribe: {
+					# i.e. may not subscribe C1 or C2 events
+					deny: [ "bus.C1.>", "bus.C2.>" ]
+				}
+			}
+		
+			# The store's gateway account
+			STORE: {
+				exports: [
+					{ stream: "downlink.2.>" }
+					{ stream: "downlink.ALL.>" }
+					{ service: "uplink.2.*.SALETX.>" }
+					{ service: "uplink.2.*.MOPREADY.>" }
+					{ service: "uplink.2.*.PRODALIVE" }
+				]
+			}
+		
+			APP-1: {
+				users: [ { user: "user-app-1", password: "s3cr3t" } ]
+				exports: $APP_EXPORTS
+				imports: $APP_IMPORTS
+				mappings: {
+						 production.status.2.>: production.status.>
+						 production.ping.2: production.ping
+						 production.ping.ALL: production.ping
+				}
+			}
+		
+			APP-2: {
+				users: [ { user: "user-app-2", password: "s3cr3t" } ]
+				exports: $APP_EXPORTS
+				imports: $APP_IMPORTS
+			}
+		
+			# client's in the APP-3 account get NO_PII_PERMS
+			APP-3: {
+				users: [ { user: "user-app-3", password: "s3cr3t", permissions: $NO_PII_PERMS } ]
+				exports: $APP_EXPORTS
+				imports: $APP_IMPORTS
+			}
+		
+			SYS: {
+				users: [ { user: "user-system", password: "s3cr3t" } ]
+			}
+		}
+		system_account: "SYS"
+	`))
+	defer removeFile(t, store2Config)
+	store2Server, _ := RunServerWithConfig(store2Config)
+	require_True(t, store2Server != nil)
+	defer store2Server.Shutdown()
+
+	time.Sleep(200 * time.Millisecond)
+	checkLeafNodeConnectedCount(t, store1Server, 2)
+	checkLeafNodeConnectedCount(t, store2Server, 2)
+
+	sa1, _ := nats.Connect(store1Server.ClientURL(), nats.UserInfo("user-app-1", "s3cr3t"))
+	require_True(t, sa1 != nil)
+	defer sa1.Close()
+
+	sa2, _ := nats.Connect(store2Server.ClientURL(), nats.UserInfo("user-app-1", "s3cr3t"))
+	require_True(t, sa1 != nil)
+	defer sa2.Close()
+
+	ca1, _ := nats.Connect(cloudServer.ClientURL(), nats.UserInfo("user-cloud-app-1", "s3cr3t"))
+	require_True(t, ca1 != nil)
+	defer ca1.Close()
+
+	// Bring up our store #1 service; respond to pings by emitting a PRODALIVE event on the store bus
+	_, err = sa1.Subscribe("production.ping", func(request *nats.Msg) {
+		atomic.AddInt32(&sa1Received, 1)
+		//fmt.Println("store 1 got pinged:", request.Subject)
+		err = sa1.Publish("event.C4.PRODALIVE", []byte(""))
+		require_NoError(t, err)
+	})
+	require_NoError(t, err)
+
+	// Bring up our store #2 service; respond to pings by emitting a PRODALIVE event on the store bus
+	_, err = sa2.Subscribe("production.ping", func(request *nats.Msg) {
+		atomic.AddInt32(&sa2Received, 1)
+		//fmt.Println("store 2 got pinged:", request.Subject)
+		err := sa2.Publish("event.C4.PRODALIVE", []byte(""))
+		require_NoError(t, err)
+	})
+	require_NoError(t, err)
+
+	// store alive messages are published to "event.C4.PRODALIVE" which are seen as uplink.{store num}.C4.PRODALIVE
+	// by leaf accounts.
+
+	// leaf account at hub maps uplink.> to bus.> in cloud accounts.
+
+	// fixme(TGB): interest marked xx will not propagate interest to store accounts. Why?
+	// ok: bus.>
+	// ok: bus.*.>
+	// xx: bus.*.*.>
+	// xx: bus.*.*.*
+	// xx: bus.*.*.PRODALIVE
+	// ok: bus.1.>
+	// ok: bus.1.*.>
+	// ok: bus.1.*.*
+	// ok: bus.1.*.PRODALIVE
+	// ok: bus.1.C4.PRODALIVE
+
+	testCases := []struct {
+		cloudSub   string
+		receiveAll bool
+	}{
+		{cloudSub: "bus.>", receiveAll: true},
+		{cloudSub: "bus.*.>", receiveAll: true},
+		{cloudSub: "bus.*.*.>", receiveAll: true},
+		{cloudSub: "bus.*.*.*", receiveAll: true},
+		{cloudSub: "bus.*.*.PRODALIVE", receiveAll: true},
+		{cloudSub: "bus.1.>", receiveAll: false},
+		{cloudSub: "bus.1.*.>", receiveAll: false},
+		{cloudSub: "bus.1.*.*", receiveAll: false},
+		{cloudSub: "bus.1.*.PRODALIVE", receiveAll: false},
+		{cloudSub: "bus.1.C4.PRODALIVE", receiveAll: false},
+	}
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("Cloud sub: %s", tc.cloudSub), func(t *testing.T) {
+			var store1ProdAlive = int32(0)
+			var store2ProdAlive = int32(0)
+
+			// fmt.Printf("cloud sub: %s\n", tc.cloudSub)
+
+			cSub, err := ca1.Subscribe(tc.cloudSub, func(request *nats.Msg) {
+				// fmt.Println("cloud app received PRODALIVE event from:", request.Subject)
+				subjectToks := strings.Split(request.Subject, ".")
+				require_True(t, len(subjectToks) >= 4)
+				// If not a PRODALIVE event, ignore
+				if subjectToks[3] != "PRODALIVE" {
+					return
+				}
+				switch subjectToks[1] {
+				case "1":
+					atomic.AddInt32(&store1ProdAlive, 1)
+				case "2":
+					atomic.AddInt32(&store2ProdAlive, 1)
+				default:
+					t.Fatalf("expected to be able to parse store id from event")
+				}
+			})
+			require_NoError(t, err)
+
+			// short delay for interest propagation
+			time.Sleep(100 * time.Millisecond)
+
+			// Ping Store 1 Production
+			err = ca1.Publish("production.ping.1", []byte("Are you alive Store 1 production?"))
+			require_NoError(t, err)
+
+			checkFor(t, 200*time.Millisecond, 4*time.Millisecond, func() error {
+				if store1ProdAlive == 1 && store2ProdAlive == 0 {
+					return nil
+				}
+				return fmt.Errorf("expected 1 alive event from store 1 and none from store 2, got %d and %d", store1ProdAlive, store2ProdAlive)
+			})
+
+			// Ping ALL stores Production
+			err = ca1.Publish("production.ping.ALL", []byte("Are you alive all Stores?"))
+			require_NoError(t, err)
+
+			checkFor(t, 200*time.Millisecond, 4*time.Millisecond, func() error {
+				if (tc.receiveAll && store1ProdAlive == 2 && store2ProdAlive == 1) || (!tc.receiveAll && store1ProdAlive == 2 && store2ProdAlive == 0) {
+					return nil
+				}
+				return fmt.Errorf("expected two alive event from store 1 and one from store 2, got %d and %d", store1ProdAlive, store2ProdAlive)
+			})
+
+			cSub.Unsubscribe()
+			time.Sleep(100 * time.Millisecond)
+		})
+	}
+}
