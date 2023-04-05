@@ -1046,7 +1046,7 @@ func (a *Account) EnableJetStream(limits map[string]JetStreamAccountLimits) erro
 	jsa.utimer = time.AfterFunc(usageTick, jsa.sendClusterUsageUpdateTimer)
 	// Cluster mode updates to resource usage, but we always will turn on. System internal prevents echos.
 	jsa.updatesPub = fmt.Sprintf(jsaUpdatesPubT, a.Name, sysNode)
-	jsa.updatesSub, _ = s.sysSubscribe(fmt.Sprintf(jsaUpdatesSubT, a.Name), jsa.remoteUpdateUsage)
+	jsa.updatesSub, _ = s.sysSubscribe(fmt.Sprintf(jsaUpdatesSubT, a.Name), s.noInlineCallback(jsa.remoteUpdateUsage))
 	jsa.usageMu.Unlock()
 
 	js.accounts[a.Name] = jsa
@@ -1701,7 +1701,7 @@ func (a *Account) JetStreamEnabled() bool {
 	return enabled
 }
 
-func (jsa *jsAccount) remoteUpdateUsage(sub *subscription, c *client, _ *Account, subject, _ string, msg []byte) {
+func (jsa *jsAccount) remoteUpdateUsage(sub *subscription, c *client, _ *Account, subject, _ string, hdr, msg []byte) {
 	const usageSize = 32
 
 	// jsa.js.srv is immutable and guaranteed to no be nil, so no lock needed.
