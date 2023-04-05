@@ -2697,10 +2697,10 @@ func (n *raft) runAsCandidate() {
 
 // handleAppendEntry handles an append entry from the wire.
 func (n *raft) handleAppendEntry(sub *subscription, c *client, _ *Account, subject, reply string, msg []byte) {
-	if n.outOfResources() {
-		n.debug("AppendEntry not processing inbound, no resources")
-		return
-	}
+	//if n.outOfResources() {
+	//	n.debug("AppendEntry not processing inbound, no resources")
+	//	return
+	//}
 
 	msg = copyBytes(msg)
 	if ae, err := n.decodeAppendEntry(msg, sub, reply); err == nil {
