@@ -3205,8 +3205,8 @@ func (c *client) deliverMsg(prodIsMQTT bool, sub *subscription, acc *Account, su
 		} else {
 			sub.icb(sub, c, acc, string(subject), string(reply), msg[:msgSize])
 		}
-		if dur := time.Since(start); dur >= readLoopReportThreshold {
-			srv.Warnf("Internal subscription on %q took too long: %v", subject, dur)
+		if dur := time.Since(start); dur >= 5*time.Millisecond {
+			srv.Warnf("Internal subscription for %v on %q took too long: %v", c, subject, dur)
 		}
 		return true
 	}
