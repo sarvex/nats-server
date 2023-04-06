@@ -11,90 +11,6 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-func TestJetStreamConsumerMultipleFiltersInitialStateAccounting(t *testing.T) {
-	var err error
-	s := RunBasicJetStreamServer(t)
-	defer s.Shutdown()
-
-	nc, _ := jsClientConnect(t, s)
-	defer nc.Close()
-	acc := s.GlobalAccount()
-
-	mset, err := acc.addStream(&StreamConfig{
-		Name:      "TEST",
-		Retention: LimitsPolicy,
-		Subjects:  []string{"one", "two", "three.>", "four"},
-		MaxAge:    time.Second * 90,
-	})
-	require_NoError(t, err)
-	sendStreamMsg(t, nc, "three.3", "4")
-	sendStreamMsg(t, nc, "three.3", "4")
-	sendStreamMsg(t, nc, "one", "1")
-	sendStreamMsg(t, nc, "two", "2")
-	sendStreamMsg(t, nc, "one", "3")
-	sendStreamMsg(t, nc, "one", "3")
-
-	deliver := "deliver"
-	_, err = mset.addConsumer(&ConsumerConfig{
-		Durable:        "durable",
-		DeliverSubject: deliver,
-		FilterSubjects: []string{"one", "two"},
-		AckPolicy:      AckExplicit,
-	})
-	require_NoError(t, err)
-
-	sub, err := nc.SubscribeSync(deliver)
-	require_NoError(t, err)
-
-	for i := 0; i < 4; i++ {
-		_, err = sub.NextMsg(time.Second * 1)
-		require_NoError(t, err)
-	}
-}
-
-func TestJetStreamConsumerMultipleFiltersAccounting(t *testing.T) {
-	var err error
-	s := RunBasicJetStreamServer(t)
-	defer s.Shutdown()
-
-	nc, _ := jsClientConnect(t, s)
-	defer nc.Close()
-	acc := s.GlobalAccount()
-
-	mset, err := acc.addStream(&StreamConfig{
-		Name:      "TEST",
-		Retention: LimitsPolicy,
-		Subjects:  []string{"one", "two", "three.>"},
-		MaxAge:    time.Second * 90,
-	})
-	require_NoError(t, err)
-
-	deliver := "deliver"
-	_, err = mset.addConsumer(&ConsumerConfig{
-		Durable:        "durable",
-		DeliverSubject: deliver,
-		FilterSubjects: []string{"one", "two", "three.>"},
-		AckPolicy:      AckExplicit,
-	})
-	require_NoError(t, err)
-
-	sub, err := nc.SubscribeSync(deliver)
-	require_NoError(t, err)
-
-	_, err = sub.NextMsg(time.Second * 1)
-	require_True(t, err != nil)
-
-	sendStreamMsg(t, nc, "one", "1")
-	_, err = sub.NextMsg(time.Second * 1)
-
-	nc.Publish("two", []byte("2"))
-	nc.Publish("three", []byte("3"))
-	nc.Publish("two", []byte("4"))
-	nc.Flush()
-
-	_, err = sub.NextMsg(time.Second * 1)
-}
-
 func TestJetStreamConsumerMultipleFiltersMultipleConsumers(t *testing.T) {
 	s := RunBasicJetStreamServer(t)
 	defer s.Shutdown()
@@ -129,9 +45,9 @@ func TestJetStreamConsumerMultipleFiltersMultipleConsumers(t *testing.T) {
 		delivered    atomic.Int32
 	}{
 		{name: "C1", subjects: []string{"one", "two"}, expectedMsgs: 125},
-		// {name: "C2", subjects: []string{"two", "three"}, expectedMsgs: 1000},
-		// {name: "C3", subjects: []string{"one", "three"}, expectedMsgs: 750},
-		// {name: "C4", subjects: []string{"one", "five.>"}, expectedMsgs: 800},
+		{name: "C2", subjects: []string{"two", "three"}, expectedMsgs: 325},
+		{name: "C3", subjects: []string{"one", "three"}, expectedMsgs: 300},
+		{name: "C4", subjects: []string{"one", "five.>"}, expectedMsgs: 350},
 	}
 
 	mset, err := acc.addStream(&StreamConfig{

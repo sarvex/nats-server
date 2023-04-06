@@ -3133,7 +3133,7 @@ var (
 // Is partition aware and redeliver aware.
 // Lock should be held.
 func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
-	fmt.Println("--------------------------")
+	// fmt.Println("--------------------------")
 	if o.mset == nil || o.mset.store == nil {
 		return nil, 0, errBadConsumer
 	}
@@ -3213,10 +3213,10 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 	}
 
 	var lastErr error
-	fmt.Printf("BEFORE LOOP: SSEQ: %v\n", o.sseq)
+	// fmt.Printf("BEFORE LOOP: SSEQ: %v\n", o.sseq)
 	// if we have filters, iterate over filters and optimize by buffering found messages.
 	for _, filter := range o.subjf {
-		fmt.Printf("FILTER %v: current %v next %v pmsg:%v\n", filter.subject, filter.currentSeq, filter.nextSeq, filter.pmsg != nil)
+		// fmt.Printf("FILTER %v: current %v next %v pmsg:%v\n", filter.subject, filter.currentSeq, filter.nextSeq, filter.pmsg != nil)
 		// We probably should do a better work here and update o.subjf when it needs to be updated... not have a safe-guard here.
 		if filter.nextSeq < o.sseq {
 			// fmt.Printf("RESET SEQUENCE CURR:%v FROM: %v TO:%v consumer: %v\n", filter.currentSeq, filter.nextSeq, o.sseq, o.cfg.Name)
@@ -3236,7 +3236,7 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 			o.mu.Unlock()
 			pmsg := getJSPubMsgFromPool()
 			sm, sseq, err := store.LoadNextMsg(filterSubject, filterWC, nextSeq, &pmsg.StoreMsg)
-			fmt.Printf("FILTER LOADED: sseq %v msg: %v, err: %v\n", sseq, sm != nil, err)
+			// fmt.Printf("FILTER LOADED: sseq %v msg: %v, err: %v\n", sseq, sm != nil, err)
 			o.mu.Lock()
 
 			filter.err = err
@@ -3261,18 +3261,21 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 	// to avoid reflection.
 	if o.subjf != nil && len(o.subjf) > 1 {
 		sort.Slice(o.subjf, func(i, j int) bool {
+			if o.subjf[j].nextSeq == o.subjf[i].nextSeq {
+				return (o.subjf[i].pmsg == nil) != (o.subjf[j].pmsg == nil) && o.subjf[j].pmsg == nil
+			}
 			return o.subjf[j].nextSeq > o.subjf[i].nextSeq
 		})
 	}
-	fmt.Printf("SORTED SUBJF. SSEQ: %v\n", o.sseq)
-	for _, filter := range o.subjf {
-		fmt.Printf("FILTER %v curr %v next %v\n", filter.subject, filter.currentSeq, filter.nextSeq)
-	}
+	// fmt.Printf("SORTED SUBJF. SSEQ: %v\n", o.sseq)
+	// for _, filter := range o.subjf {
+	// fmt.Printf("FILTER %v curr %v next %v\n", filter.subject, filter.currentSeq, filter.nextSeq)
+	// }
 
 	// Grab next message applicable to us.
 	// Sort sequences first, to grab the first message.
 	for _, filter := range o.subjf {
-		fmt.Printf("GRAB %v: current %v next %v pmsg:%v\n", filter.subject, filter.currentSeq, filter.nextSeq, filter.pmsg != nil)
+		// fmt.Printf("GRAB %v: current %v next %v pmsg:%v\n", filter.subject, filter.currentSeq, filter.nextSeq, filter.pmsg != nil)
 		// set o.sseq to the first subject sequence
 		// This means we got a message in this subject fetched.
 		if filter.pmsg != nil {
@@ -3280,11 +3283,11 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 			o.sseq = filter.currentSeq
 			returned := filter.pmsg
 			filter.pmsg = nil
-			fmt.Printf("RETURNING SSEQ %v\n", returned.seq)
+			// fmt.Printf("RETURNING SSEQ %v\n", returned.seq)
 			return returned, 1, filter.err
 		}
 		if filter.nextSeq > o.sseq && filter.err == ErrStoreEOF {
-			fmt.Printf("SKIPPING EOF %v next: %v o.sseq: %v pmsg: %v\n", filter.subject, filter.nextSeq, o.sseq, filter.pmsg != nil)
+			// fmt.Printf("SKIPPING EOF %v next: %v o.sseq: %v pmsg: %v\n", filter.subject, filter.nextSeq, o.sseq, filter.pmsg != nil)
 			o.updateSkipped(filter.nextSeq)
 		}
 	}
@@ -3307,10 +3310,10 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 	// 		o.updateSkipped(filter.nextSeq)
 	// 	}
 	// }
-	fmt.Println("NOTHING RETURNED. SUBJF:")
-	for _, filter := range o.subjf {
-		fmt.Printf("FILTER %v curr %v next %v\n", filter.subject, filter.currentSeq, filter.nextSeq)
-	}
+	// fmt.Println("NOTHING RETURNED. SUBJF:")
+	// for _, filter := range o.subjf {
+	// 	fmt.Printf("FILTER %v curr %v next %v\n", filter.subject, filter.currentSeq, filter.nextSeq)
+	// }
 
 	return nil, 0, lastErr
 }
