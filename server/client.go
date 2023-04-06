@@ -2673,6 +2673,10 @@ func (c *client) addShadowSub(sub *subscription, ime *ime) (*subscription, error
 	nsub := *sub // copy
 	nsub.im = im
 
+	//if strings.Contains(string(sub.subject), "bus") || strings.Contains(string(sub.subject), "uplink") {
+	//	fmt.Println(c.srv.serverName(), "addShadowSub", string(sub.subject))
+	//}
+
 	if !im.usePub && ime.dyn && im.tr != nil {
 		if im.rtr == nil {
 			im.rtr = im.tr.reverse()
@@ -2727,6 +2731,9 @@ func (c *client) canSubscribe(subject string, optQueue ...string) bool {
 	if c.perms.sub.allow != nil {
 		r := c.perms.sub.allow.Match(subject)
 		allowed = len(r.psubs) > 0
+		if strings.Contains(subject, "uplink") && allowed {
+			fmt.Printf("LEAF perms.sub.allow Match (simple): [%t] sub [%s] user [%s]\n", allowed, subject, c.getAuthUser())
+		}
 		if queue != _EMPTY_ && len(r.qsubs) > 0 {
 			// If the queue appears in the allow list, then DO allow.
 			allowed = queueMatches(queue, r.qsubs)
@@ -2736,6 +2743,9 @@ func (c *client) canSubscribe(subject string, optQueue ...string) bool {
 		if !allowed && c.kind == LEAF && subjectHasWildcard(subject) {
 			r := c.perms.sub.allow.ReverseMatch(subject)
 			allowed = len(r.psubs) != 0
+			if strings.Contains(subject, "uplink") {
+				fmt.Printf("LEAF perms.sub.allow ReverseMatch (wildcard): [%t] sub [%s] user [%s]\n", allowed, subject, c.getAuthUser())
+			}
 		}
 	}
 	// If we have a deny list and we think we are allowed, check that as well.

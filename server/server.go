@@ -3686,7 +3686,9 @@ func (s *Server) updateRemoteSubscription(acc *Account, sub *subscription, delta
 	if s.gateway.enabled {
 		s.gatewayUpdateSubInterest(acc.Name, sub, delta)
 	}
-
+	if strings.Contains(string(sub.subject), "uplink") {
+		fmt.Printf("updateRemoteSubscription: Srv [%s] sub [%s]\n", s.Name(), string(sub.subject))
+	}
 	s.updateLeafNodes(acc, sub, delta)
 }
 

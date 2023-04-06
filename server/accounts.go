@@ -1988,6 +1988,9 @@ func (a *Account) addServiceImportSub(si *serviceImport) error {
 	// This is similar to what initLeafNodeSmapAndSendSubs does
 	// TODO we need to consider performing this update as we get client subscriptions.
 	//      This behavior would result in subscription propagation only where actually used.
+	if strings.Contains(string(sub.subject), "uplink") {
+		fmt.Printf("addServiceImportSub: Srv [%s] sub [%s]", a.srv.Name(), string(sub.subject))
+	}
 	a.srv.updateLeafNodes(a, sub, 1)
 	return nil
 }

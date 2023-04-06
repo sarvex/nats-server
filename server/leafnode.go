@@ -1793,6 +1793,10 @@ func (s *Server) updateLeafNodes(acc *Account, sub *subscription, delta int32) {
 		return
 	}
 
+	if strings.Contains(string(sub.subject), "uplink") {
+		fmt.Printf("updateLeafNodes: Srv: [%s] Acct: [%s] sub [%s]\n", s.Name(), acc.Name, string(sub.subject))
+	}
+
 	_l := [32]*client{}
 	leafs := _l[:0]
 
@@ -1818,6 +1822,11 @@ func (s *Server) updateLeafNodes(acc *Account, sub *subscription, delta int32) {
 		if skip {
 			continue
 		}
+
+		if strings.Contains(string(sub.subject), "uplink") {
+			fmt.Printf("updateSmap: Srv: [%s] Acct: [%s] LID: [%d] sub [%s]\n", s.Name(), acc.Name, ln.cid, string(sub.subject))
+		}
+
 		ln.updateSmap(sub, delta)
 	}
 }
@@ -1989,6 +1998,10 @@ func (c *client) processLeafSub(argo []byte) (err error) {
 	}
 	sub.subject = args[0]
 
+	//if strings.Contains(string(sub.subject), "uplink") {
+	//	fmt.Printf("processLeafSub START: LID: [%s], sub [%s]\n", c.String(), string(sub.subject))
+	//}
+
 	c.mu.Lock()
 	if c.isClosed() {
 		c.mu.Unlock()
@@ -2083,6 +2096,9 @@ func (c *client) processLeafSub(argo []byte) (err error) {
 	// and non-solicited state in this call so we will do the right thing.
 	srv.updateLeafNodes(acc, sub, delta)
 
+	if strings.Contains(string(sub.subject), "uplink") {
+		fmt.Printf("processLeafSub OK: Srv: [%s] LID: [%s], sub [%s]\n", srv.serverName(), c.String(), string(sub.subject))
+	}
 	return nil
 }
 
