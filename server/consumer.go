@@ -3172,6 +3172,7 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 
 	if o.hasSkipListPending() {
 		seq := o.lss.seqs[0]
+		// fmt.Printf("NEXT pending seq: %+v\n", seq)
 		if len(o.lss.seqs) == 1 {
 			o.sseq = o.lss.resume
 			o.lss = nil
@@ -3184,6 +3185,7 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 		if sm == nil || err != nil {
 			pmsg.returnToPool()
 		}
+		// fmt.Printf("SSEQ ++ FROM %v\n", o.sseq)
 		o.sseq++
 		return pmsg, 1, err
 	}
@@ -3221,9 +3223,9 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 		if filter.nextSeq < o.sseq {
 			// fmt.Printf("RESET SEQUENCE CURR:%v FROM: %v TO:%v consumer: %v\n", filter.currentSeq, filter.nextSeq, o.sseq, o.cfg.Name)
 
-			// if o.cfg.Durable == "C1" {
-			// 	o.client.Warnf("FITER < OSSEQ. nextSeq:%v o.sseq %v\n", filter.nextSeq, o.sseq)
-			// }
+			if o.cfg.Durable == "C1" {
+				o.client.Warnf("FITER < OSSEQ. nextSeq:%v o.sseq %v\n", filter.nextSeq, o.sseq)
+			}
 
 			// o.subjf should always point to the right starting point for reading messages
 			// if anything modified it, make sure our sequence do not start earlier.
@@ -3269,7 +3271,7 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 	}
 	// fmt.Printf("SORTED SUBJF. SSEQ: %v\n", o.sseq)
 	// for _, filter := range o.subjf {
-	// fmt.Printf("FILTER %v curr %v next %v\n", filter.subject, filter.currentSeq, filter.nextSeq)
+	// 	fmt.Printf("FILTER %v curr %v next %v\n", filter.subject, filter.currentSeq, filter.nextSeq)
 	// }
 
 	// Grab next message applicable to us.
@@ -3286,8 +3288,13 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 			// fmt.Printf("RETURNING SSEQ %v\n", returned.seq)
 			return returned, 1, filter.err
 		}
-		if filter.nextSeq > o.sseq && filter.err == ErrStoreEOF {
-			// fmt.Printf("SKIPPING EOF %v next: %v o.sseq: %v pmsg: %v\n", filter.subject, filter.nextSeq, o.sseq, filter.pmsg != nil)
+	}
+
+	filter := o.subjf[0]
+	if filter.nextSeq > o.sseq {
+		// fmt.Printf("NONMSG UPDATE %v next: %v o.sseq: %v pmsg: %v\n", filter.subject, filter.nextSeq, o.sseq, filter.pmsg != nil)
+		o.sseq = filter.nextSeq
+		if filter.err == ErrStoreEOF {
 			o.updateSkipped(filter.nextSeq)
 		}
 	}

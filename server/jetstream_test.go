@@ -18999,6 +18999,7 @@ func TestJetStreamConsumerMultipleSubjectsLast(t *testing.T) {
 	if j != expectedStreamSeq {
 		t.Fatalf("wrong sequence, expected %v got %v", expectedStreamSeq, j)
 	}
+	fmt.Printf("got message: %+v\n", string(msg.Data))
 
 	require_NoError(t, msg.AckSync())
 
@@ -19011,6 +19012,7 @@ func TestJetStreamConsumerMultipleSubjectsLast(t *testing.T) {
 	info, err := js.ConsumerInfo("name", durable)
 	require_NoError(t, err)
 
+	fmt.Printf("INFO: %+v\n", info)
 	require_True(t, info.NumAckPending == 0)
 	require_True(t, info.AckFloor.Stream == 8)
 	require_True(t, info.AckFloor.Consumer == 1)
