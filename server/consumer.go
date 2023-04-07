@@ -3288,15 +3288,15 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 			// fmt.Printf("RETURNING SSEQ %v\n", returned.seq)
 			return returned, 1, filter.err
 		}
+		if filter.err == ErrStoreEOF {
+			o.updateSkipped(filter.nextSeq)
+		}
 	}
 
 	filter := o.subjf[0]
 	if filter.nextSeq > o.sseq {
 		// fmt.Printf("NONMSG UPDATE %v next: %v o.sseq: %v pmsg: %v\n", filter.subject, filter.nextSeq, o.sseq, filter.pmsg != nil)
 		o.sseq = filter.nextSeq
-		if filter.err == ErrStoreEOF {
-			o.updateSkipped(filter.nextSeq)
-		}
 	}
 	// allEOF := true
 	// for _, filter := range o.subjf {
