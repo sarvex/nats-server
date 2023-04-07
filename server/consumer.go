@@ -3133,7 +3133,7 @@ var (
 // Is partition aware and redeliver aware.
 // Lock should be held.
 func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
-	// fmt.Println("--------------------------")
+	fmt.Println("--------------------------")
 	if o.mset == nil || o.mset.store == nil {
 		return nil, 0, errBadConsumer
 	}
@@ -3215,22 +3215,21 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 	}
 
 	var lastErr error
-	// fmt.Printf("BEFORE LOOP: SSEQ: %v\n", o.sseq)
+	fmt.Printf("BEFORE LOOP: SSEQ: %v\n", o.sseq)
 	// if we have filters, iterate over filters and optimize by buffering found messages.
 	for _, filter := range o.subjf {
-		// fmt.Printf("FILTER %v: current %v next %v pmsg:%v\n", filter.subject, filter.currentSeq, filter.nextSeq, filter.pmsg != nil)
+		fmt.Println(">>>")
+		inFilter1.Add(1)
+		fmt.Printf("FILTER %v: current %v next %v pmsg:%v\n", filter.subject, filter.currentSeq, filter.nextSeq, filter.pmsg != nil)
 		// We probably should do a better work here and update o.subjf when it needs to be updated... not have a safe-guard here.
 		if filter.nextSeq < o.sseq {
 			// fmt.Printf("RESET SEQUENCE CURR:%v FROM: %v TO:%v consumer: %v\n", filter.currentSeq, filter.nextSeq, o.sseq, o.cfg.Name)
-
-			if o.cfg.Durable == "C1" {
-				o.client.Warnf("FITER < OSSEQ. nextSeq:%v o.sseq %v\n", filter.nextSeq, o.sseq)
-			}
 
 			// o.subjf should always point to the right starting point for reading messages
 			// if anything modified it, make sure our sequence do not start earlier.
 			filter.nextSeq = o.sseq
 		}
+
 		// if this subject didn't fetch any message before, do it now
 		if filter.pmsg == nil {
 			// We will unlock here in case lots of contention, e.g. WQ.
@@ -3238,8 +3237,8 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 			o.mu.Unlock()
 			pmsg := getJSPubMsgFromPool()
 			sm, sseq, err := store.LoadNextMsg(filterSubject, filterWC, nextSeq, &pmsg.StoreMsg)
-			// fmt.Printf("FILTER LOADED: sseq %v msg: %v, err: %v\n", sseq, sm != nil, err)
-			o.mu.Lock()
+			fmt.Printf("FILTER %v LOADED: sseq %v msg: %v, err: %v\n", filter.subject, sseq, sm != nil, err)
+			// fmt.Printf("%v SSEQ %v CUR %v NEXT %v LOADED %v\n", filter.subject, o.sseq, filter.currentSeq, filter.nextSeq, sseq)
 
 			filter.err = err
 
@@ -3249,12 +3248,19 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 				pmsg.returnToPool()
 				pmsg = nil
 			}
+			o.mu.Lock()
 			if sseq >= filter.nextSeq {
 				filter.nextSeq = sseq + 1
 			}
+			// If we're sure that this filter has continous sequence of messages, skip looking up other filters.
+			if filter.currentSeq == nextSeq && sseq == filter.currentSeq && err != ErrStoreEOF {
+				break
+			}
+
 		}
 
 	}
+	fmt.Println("*")
 
 	// Don't sort the o.subjf if it's only one entry
 	// Sort uses `reflect` and can noticeably slow down fetching,
@@ -3263,21 +3269,27 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 	// to avoid reflection.
 	if o.subjf != nil && len(o.subjf) > 1 {
 		sort.Slice(o.subjf, func(i, j int) bool {
-			if o.subjf[j].nextSeq == o.subjf[i].nextSeq {
-				return (o.subjf[i].pmsg == nil) != (o.subjf[j].pmsg == nil) && o.subjf[j].pmsg == nil
+			// if o.subjf[j].nextSeq == o.subjf[i].nextSeq {
+			// 	return (o.subjf[i].pmsg == nil) != (o.subjf[j].pmsg == nil) && o.subjf[j].pmsg == nil
+			// }
+			if o.subjf[j].pmsg != nil && o.subjf[i].pmsg == nil {
+				return false
 			}
 			return o.subjf[j].nextSeq > o.subjf[i].nextSeq
 		})
 	}
 	// fmt.Printf("SORTED SUBJF. SSEQ: %v\n", o.sseq)
-	// for _, filter := range o.subjf {
-	// 	fmt.Printf("FILTER %v curr %v next %v\n", filter.subject, filter.currentSeq, filter.nextSeq)
-	// }
+	for _, filter := range o.subjf {
+		fmt.Printf("FILTER %v curr %v next %v\n", filter.subject, filter.currentSeq, filter.nextSeq)
+	}
 
 	// Grab next message applicable to us.
 	// Sort sequences first, to grab the first message.
 	for _, filter := range o.subjf {
-		// fmt.Printf("GRAB %v: current %v next %v pmsg:%v\n", filter.subject, filter.currentSeq, filter.nextSeq, filter.pmsg != nil)
+		filter = o.subjf[0]
+		fmt.Println("<<<")
+		inFilter2.Add(1)
+		fmt.Printf("GRAB %v: current %v next %v pmsg:%v\n", filter.subject, filter.currentSeq, filter.nextSeq, filter.pmsg != nil)
 		// set o.sseq to the first subject sequence
 		// This means we got a message in this subject fetched.
 		if filter.pmsg != nil {
@@ -3285,7 +3297,7 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 			o.sseq = filter.currentSeq
 			returned := filter.pmsg
 			filter.pmsg = nil
-			// fmt.Printf("RETURNING SSEQ %v\n", returned.seq)
+			fmt.Printf("RETURNING SSEQ %v\n", returned.seq)
 			return returned, 1, filter.err
 		}
 		if filter.err == ErrStoreEOF {
@@ -3295,7 +3307,7 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 
 	filter := o.subjf[0]
 	if filter.nextSeq > o.sseq {
-		// fmt.Printf("NONMSG UPDATE %v next: %v o.sseq: %v pmsg: %v\n", filter.subject, filter.nextSeq, o.sseq, filter.pmsg != nil)
+		fmt.Printf("NONMSG UPDATE %v curr %v next: %v o.sseq: %v pmsg: %v\n", filter.subject, filter.currentSeq, filter.nextSeq, o.sseq, filter.pmsg != nil)
 		o.sseq = filter.nextSeq
 	}
 	// allEOF := true
@@ -3317,10 +3329,10 @@ func (o *consumer) getNextMsg() (*jsPubMsg, uint64, error) {
 	// 		o.updateSkipped(filter.nextSeq)
 	// 	}
 	// }
-	// fmt.Println("NOTHING RETURNED. SUBJF:")
-	// for _, filter := range o.subjf {
-	// 	fmt.Printf("FILTER %v curr %v next %v\n", filter.subject, filter.currentSeq, filter.nextSeq)
-	// }
+	fmt.Println("NOTHING RETURNED. SUBJF:")
+	for _, filter := range o.subjf {
+		fmt.Printf("FILTER %v curr %v next %v\n", filter.subject, filter.currentSeq, filter.nextSeq)
+	}
 
 	return nil, 0, lastErr
 }
@@ -4946,3 +4958,6 @@ func (o *consumer) checkStateForInterestStream() {
 		}
 	}
 }
+
+var inFilter1 atomic.Int32
+var inFilter2 atomic.Int32
