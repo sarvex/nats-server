@@ -3,7 +3,6 @@ package server
 import (
 	"fmt"
 	"math/rand"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -58,7 +57,7 @@ func TestJetStreamConsumerMultipleFiltersMultipleConsumers(t *testing.T) {
 	})
 	require_NoError(t, err)
 
-	actualMsgs := []Message{}
+	// actualMsgs := []Message{}
 	for c, consumer := range consumers {
 		_, err := mset.addConsumer(&ConsumerConfig{
 			Durable:        consumer.name,
@@ -73,8 +72,8 @@ func TestJetStreamConsumerMultipleFiltersMultipleConsumers(t *testing.T) {
 			_, err = js.Subscribe("", func(m *nats.Msg) {
 				require_NoError(t, m.Ack())
 				require_NoError(t, err)
-				info, _ := m.Metadata()
-				actualMsgs = append(actualMsgs, Message{m.Subject, info.Sequence.Stream})
+				// info, _ := m.Metadata()
+				// actualMsgs = append(actualMsgs, Message{m.Subject, info.Sequence.Stream})
 				consumers[c].delivered.Add(1)
 
 			}, nats.Bind("TEST", name))
@@ -84,9 +83,9 @@ func TestJetStreamConsumerMultipleFiltersMultipleConsumers(t *testing.T) {
 
 	// Publish with random intervals, while consumers are active.
 	rand.Seed(time.Now().UnixNano())
-	var wg sync.WaitGroup
+	// var wg sync.WaitGroup
 	for _, subject := range subjects {
-		wg.Add(subject.messages)
+		// wg.Add(subject.messages)
 		go func(subject string, messages int, wc bool) {
 			nc, js := jsClientConnect(t, s)
 			defer nc.Close()
@@ -101,32 +100,31 @@ func TestJetStreamConsumerMultipleFiltersMultipleConsumers(t *testing.T) {
 				}
 				_, err := js.PublishAsync(pubSubject, []byte("data"))
 				require_NoError(t, err)
-				wg.Done()
+				// wg.Done()
 			}
 			// fmt.Printf("DONE PUBBLISHING FOR %v\n", subject)
 		}(subject.subject, subject.messages, subject.wc)
 	}
-	wg.Wait()
-	time.Sleep(time.Second * 3)
+	// wg.Wait()
+	// time.Sleep(time.Second * 3)
 
-	msgs := []Message{}
-	js.Subscribe("", func(msg *nats.Msg) {
-		info, err := msg.Metadata()
-		require_NoError(t, err)
-		msgs = append(msgs, Message{msg.Subject, info.Sequence.Stream})
-	}, nats.BindStream("TEST"))
+	// msgs := []Message{}
+	// js.Subscribe("", func(msg *nats.Msg) {
+	// info, err := msg.Metadata()
+	// require_NoError(t, err)
+	// msgs = append(msgs, Message{msg.Subject, info.Sequence.Stream})
+	// }, nats.BindStream("TEST"))
 
 	checkFor(t, time.Second*15, time.Second*1, func() error {
 		for _, consumer := range consumers {
 			info, err := js.ConsumerInfo("TEST", consumer.name)
 			require_NoError(t, err)
 			if info.Delivered.Consumer != uint64(consumer.expectedMsgs) {
-				fmt.Printf("ACTUAL %+v\n ALL: %+v\n", actualMsgs, msgs)
-				fmt.Printf("LEN ACTUAL %v LEN ALL %v\n", len(actualMsgs), len(msgs))
-				fmt.Printf("TOTAL: %v\n", totalMsgs)
-				findMissing(actualMsgs, msgs)
-				totalOneTwo(msgs)
-
+				// fmt.Printf("ACTUAL %+v\n ALL: %+v\n", actualMsgs, msgs)
+				// fmt.Printf("LEN ACTUAL %v LEN ALL %v\n", len(actualMsgs), len(msgs))
+				// fmt.Printf("TOTAL: %v\n", totalMsgs)
+				// findMissing(actualMsgs, msgs)
+				// totalOneTwo(msgs)
 				return fmt.Errorf("%v:expected consumer delivered seq %v, got %v. actually delivered: %v", consumer.name, consumer.expectedMsgs, info.Delivered.Consumer, consumer.delivered.Load())
 			}
 			if info.AckFloor.Consumer != uint64(consumer.expectedMsgs) {
@@ -134,43 +132,40 @@ func TestJetStreamConsumerMultipleFiltersMultipleConsumers(t *testing.T) {
 			}
 			if consumer.delivered.Load() != int32(consumer.expectedMsgs) {
 
-				return fmt.Errorf("%v: expected %v, got %v", consumer.name, consumer.expectedMsgs, consumer.delivered)
+				return fmt.Errorf("%v: expected %v, got %v", consumer.name, consumer.expectedMsgs, consumer.delivered.Load())
 			}
 		}
-		// streamInfo, err := js.StreamInfo("TEST")
-		// require_NoError(t, err)
-		// fmt.Printf("STREAM INFO %+v\n", streamInfo)
 		return nil
 	})
 
 }
 
-func findMissing(actual, all []Message) {
-	act := make(map[uint64]struct{})
-	for _, msg := range actual {
-		act[msg.sequence] = struct{}{}
-	}
-	for _, msg := range all {
-		if msg.subject == "one" || msg.subject == "two" {
+// func findMissing(actual, all []Message) {
+// 	act := make(map[uint64]struct{})
+// 	for _, msg := range actual {
+// 		act[msg.sequence] = struct{}{}
+// 	}
+// 	for _, msg := range all {
+// 		if msg.subject == "one" || msg.subject == "two" {
 
-			if _, ok := act[msg.sequence]; !ok {
-				fmt.Printf("MISSING MESSAGE!!!: %+v\n", msg)
-			}
-		}
-	}
-}
+// 			if _, ok := act[msg.sequence]; !ok {
+// 				fmt.Printf("MISSING MESSAGE!!!: %+v\n", msg)
+// 			}
+// 		}
+// 	}
+// }
 
-func totalOneTwo(msgs []Message) {
-	total := 0
-	for _, msg := range msgs {
-		if msg.subject == "one" || msg.subject == "two" {
-			total++
-		}
-	}
-	fmt.Printf("TOTAL ONE TWO in ALL: %+v\n", total)
-}
+// func totalOneTwo(msgs []Message) {
+// 	total := 0
+// 	for _, msg := range msgs {
+// 		if msg.subject == "one" || msg.subject == "two" {
+// 			total++
+// 		}
+// 	}
+// 	fmt.Printf("TOTAL ONE TWO in ALL: %+v\n", total)
+// }
 
-type Message struct {
-	subject  string
-	sequence uint64
-}
+// type Message struct {
+// 	subject  string
+// 	sequence uint64
+// }
