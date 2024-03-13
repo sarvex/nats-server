@@ -16,6 +16,6 @@ require (
 )
 
 require (
-	github.com/golang/protobuf v1.4.2 // indirect
-	google.golang.org/protobuf v1.23.0 // indirect
+	github.com/golang/protobuf v1.5.0 // indirect
+	google.golang.org/protobuf v1.33.0 // indirect
 )
